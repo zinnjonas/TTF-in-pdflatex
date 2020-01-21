@@ -1,0 +1,207 @@
+#!/bin/bash 
+
+TEXMF="/usr/local/share/texmf"
+FONTFOUNDRY="coustom"
+FONTNAME=$(pwd | sed "s#.*/##")
+ENCODING="8t"
+ENCODINGODING="t1"
+ENCODINGFILE="T1-WGL4.enc"
+
+FD="${TEXMF}/tex/latex/${FONTFOUNDRY}/${FONTNAME}"
+MAP="${TEXMF}/fonts/map/dvips/${FONTNAME}"
+TFM="${TEXMF}/fonts/tfm/${FONTFOUNDRY}/${FONTNAME}"
+TTF="${TEXMF}/fonts/truetype/${FONTFOUNDRY}/${FONTNAME}"
+
+
+function create_font() {
+  if [ -z "$2" ]
+  then
+    return 0
+  fi
+  echo "Generate files for ${FONTNAME}_$1"
+  for i in $2
+  do
+    weight=$(ttf2afm "$1/$i" 2>/dev/null | grep -ie "^weight " | cut -d " " -f2 )
+    weight_addon=""
+    if [ ! -z $(echo "$weight" | grep -i "normal" ) ]
+    then
+      weight_addon="r"
+    fi
+    if [ ! -z $( echo "$weight" | grep -i "bold" ) ]
+    then
+      weight_addon="b"
+    fi
+
+    angle=$(ttf2afm "$1/$i" 2>/dev/null | grep -ie "^italicangle " | cut -d " " -f2 )
+    if [ "$angle" != "0" ]
+    then
+      weight_addon="${weight_addon}i"
+    else
+      cp "$1/$i" "${WORKFOLDER}/${FONTNAME}_$1${weight_addon}o.ttf"
+    fi
+      cp "$1/$i" "${WORKFOLDER}/${FONTNAME}_$1${weight_addon}.ttf"
+  done
+}
+
+function create_map() {
+  files=$(ls | grep "$1" )
+  
+  if [ -z "$files" ]
+  then
+    return 0
+  fi
+  rm -f "${FONTNAME}_$1.map"
+
+  for i in $files
+  do
+    i=${i%%.*}
+    name=$( ttf2afm $i 2>/dev/null | grep -i "^fontname " | cut -d " " -f2 )
+    echo "TeX Font metrics (.tfm) for ${i} ($name)"
+    ttf2tfm "$i.ttf" -q -T "${ENCODINGFILE}" -v "$i${ENCODING}.vpl" "$i${ENCODING}.tfm" 2>"$i.log"
+    vptovf "$i${ENCODING}.vpl" "$i${ENCODING}.vf" "$i${ENCODING}.tfm"
+    echo "$i${ENCODING} $name <$i.ttf <${ENCODINGFILE}" >> "${FONTNAME}_$1.map"
+    rm "$i${ENCODING}.vpl"
+    rm "$i${ENCODING}.vf"
+  done 
+} 
+
+function create_fd() {
+  if [ ! -e "${FONTNAME}_$1.map" ]
+  then
+    return 0
+  fi
+
+  cat >"${ENCODINGODING}${FONTNAME}_$1.fd" <<EOF
+\ProvidesFile{${ENCODINGODING}${FONTNAME}_$1.fd}[Font definitions for T1/${FONTNAME}_$1.]
+ 
+\DeclareFONTNAME{T1}{${FONTNAME}_$1}{}
+ 
+\DeclareFontShape{T1}{${FONTNAME}_$1}{m}{n}{<-> ${FONTNAME}_$1r${ENCODING}}{}
+\DeclareFontShape{T1}{${FONTNAME}_$1}{m}{sc}{<-> ${FONTNAME}_$1b${ENCODING}}{}
+\DeclareFontShape{T1}{${FONTNAME}_$1}{m}{sl}{<-> ${FONTNAME}_$1ro${ENCODING}}{}
+\DeclareFontShape{T1}{${FONTNAME}_$1}{m}{it}{<-> ${FONTNAME}_$1ri${ENCODING}}{}
+\DeclareFontShape{T1}{${FONTNAME}_$1}{b}{n}{<-> ${FONTNAME}_$1b${ENCODING}}{}
+\DeclareFontShape{T1}{${FONTNAME}_$1}{b}{sc}{<-> ${FONTNAME}_$1b${ENCODING}}{}
+\DeclareFontShape{T1}{${FONTNAME}_$1}{b}{sl}{<-> ${FONTNAME}_$1bo${ENCODING}}{}
+\DeclareFontShape{T1}{${FONTNAME}_$1}{b}{it}{<-> ${FONTNAME}_$1bi${ENCODING}}{}
+\DeclareFontShape{T1}{${FONTNAME}_$1}{sb}{n}{<->ssub * ${FONTNAME}_$1/b/n}{}
+\DeclareFontShape{T1}{${FONTNAME}_$1}{sb}{sc}{<->ssub * ${FONTNAME}_$1/b/sc}{}
+\DeclareFontShape{T1}{${FONTNAME}_$1}{sb}{sl}{<->ssub * ${FONTNAME}_$1/b/sl}{}
+\DeclareFontShape{T1}{${FONTNAME}_$1}{sb}{it}{<->ssub * ${FONTNAME}_$1/b/it}{}
+\DeclareFontShape{T1}{${FONTNAME}_$1}{bx}{n}{<->ssub * ${FONTNAME}_$1/b/n}{}
+\DeclareFontShape{T1}{${FONTNAME}_$1}{bx}{sc}{<->ssub * ${FONTNAME}_$1/b/sc}{}
+\DeclareFontShape{T1}{${FONTNAME}_$1}{bx}{sl}{<->ssub * ${FONTNAME}_$1/b/sl}{}
+\DeclareFontShape{T1}{${FONTNAME}_$1}{bx}{it}{<->ssub * ${FONTNAME}_$1/b/it}{}
+ 
+\endinput
+EOF
+	
+}
+
+function copy_files() {
+  if [ ! -e "${FONTNAME}_$1.map" ]
+  then
+    return 0
+  fi
+  sudo cp "${ENCODINGODING}${FONTNAME}_$1.fd" "${FD}"
+  sudo cp "${FONTNAME}_$1.map" "${MAP}"
+  echo "Copy stuff"
+  sudo cp ${FONTNAME}_${1}*.tfm "${TFM}"
+  sudo cp ${FONTNAME}_${1}*.ttf "${TTF}"
+}
+
+function update_map() {
+if [ ! -e "${FONTNAME}_$1.map" ]
+then
+  return 0
+fi
+sudo sed -i "/Map ${FONTNAME}_$1.map/d" /etc/texmf/web2c/updmap.cfg
+sudo bash -c "echo \"Map ${FONTNAME}_$1.map\" >> /etc/texmf/web2c/updmap.cfg"
+}
+
+# Check for ttf files in directories
+RMFILES=$( ls "rm" | grep -i ".ttf$" )
+SFFILES=$( ls "sf" | grep -i ".ttf$" )
+TTFILES=$( ls "tt" | grep -i ".ttf$" )
+
+if [ -z "${RMFILES}" -a -z "${SFFILES}" -a -z "${TTFILES}" ]
+then
+  echo "No files found..."
+  exit 1
+fi
+
+error=0
+
+# Check for necessary tools
+if [ $( which ttf2afm | wc -l ) -lt 1 ]
+then
+  echo "ttf2afm is not available."
+  error=2
+fi
+
+if [ $( which ttf2tfm | wc -l ) -lt 1 ]
+then
+  echo "ttf2tfm is not available."
+  error=2
+fi
+if [ $(  which vptovf | wc -l) -lt 1 ]
+then
+  echo "vptovf is not available."
+  error=2
+fi
+
+if [ ${error} -gt 0 ]
+then
+  exit ${error}
+fi
+
+if [ ! -d "${FD}" ]
+then
+  echo "creating directory: ${FD}"
+  sudo mkdir -p "${FD}"
+fi
+if [ ! -d "${MAP}" ]
+then
+  echo "creating directory: ${MAP}"
+  sudo mkdir -p "${MAP}"
+fi
+if [ ! -d "${TFM}" ]
+then
+  echo "creating directory: ${TFM}"
+  sudo mkdir -p "${TFM}"
+fi
+if [ ! -d "${TTF}" ]
+then
+  echo "creating directory: ${TTF}"
+  sudo mkdir -p ${TTF}
+fi
+
+WORKFOLDER="/tmp/$(basename $0)_${FONTNAME}"
+
+echo "creating working directory ${WORKFOLDER}" 
+rm -fr "${WORKFOLDER}"
+mkdir -p "${WORKFOLDER}"
+
+create_font "rm" "${RMFILES}"
+create_font "sf" "${SFFILES}"
+create_font "tt" "${TTFILES}"
+cd ${WORKFOLDER}
+create_map "rm"
+create_map "sf"
+create_map "tt"
+
+create_fd "rm"
+create_fd "sf"
+create_fd "tt"
+
+copy_files "rm"
+copy_files "sf"
+copy_files "tt"
+
+sudo texhash "${TEXMF}"
+
+update_map "rm"
+update_map "sf"
+update_map "tt"
+
+sudo updmap-sys
